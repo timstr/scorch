@@ -4,7 +4,6 @@
 #include <array>
 #include <cassert>
 #include <cmath>
-#include <cmath>
 #include <cstdint>
 #include <functional>
 #include <iomanip>
