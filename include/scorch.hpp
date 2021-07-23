@@ -34,18 +34,34 @@ namespace scorch {
         };
 
         template<>
-        struct IsScalarImpl<1> {
+        struct IsScalarImpl<> {
             static constexpr bool Value = true;
         };
 
         template<std::size_t... Dimensions>
         constexpr bool IsScalar = IsScalarImpl<Dimensions...>::Value;
 
+        template<std::size_t... Dimensions>
+        struct NumElementsImpl {
+            static constexpr std::size_t Value = (Dimensions * ...);
+        };
+
+        template<>
+        struct NumElementsImpl<> {
+            static constexpr std::size_t Value = 1;
+        };
+
+        template<std::size_t... Dimensions>
+        constexpr std::size_t NumElements = NumElementsImpl<Dimensions...>::Value;
+
     } // namespace detail
 
     template<typename T, std::size_t... Dimensions>
     class TensorStorage {
     public:
+        using ValueType = T;
+        static constexpr bool Scalar = detail::IsScalar<Dimensions...>;
+
         TensorStorage() noexcept
             : m_value{} {
 
@@ -58,6 +74,16 @@ namespace scorch {
             return m_value[flatten_index({indices...})];
         }
 
+        T item() const noexcept {
+            assert(Scalar);
+            return m_value[0];
+        }
+
+        T& item() noexcept {
+            assert(Scalar);
+            return m_value[0];
+        }
+
         T get_flat(std::size_t flat_index) const noexcept {
             assert(flat_index < NElements);
             return m_value[flat_index];
@@ -67,9 +93,39 @@ namespace scorch {
             return m_value[flat_index];
         }
 
+        void fill(T fill_value) noexcept {
+            for (auto& v : m_value) {
+                v = fill_value;
+            }
+        }
+
+        void zero() noexcept {
+            for (auto& v : m_value) {
+                v = T{0};
+            }
+        }
+
+        void fma(const TensorStorage& x, T y) noexcept {
+            for (auto i = std::size_t{0}; i < NElements; ++i) {
+                get_flat(i) += x.get_flat(i) * y;
+            }
+        }
+
+        void fma(T x, const TensorStorage& y) noexcept {
+            for (auto i = std::size_t{0}; i < NElements; ++i) {
+                get_flat(i) += x * y.get_flat(i);
+            }
+        }
+
+        void fma(const TensorStorage& x, const TensorStorage& y) noexcept {
+            for (auto i = std::size_t{0}; i < NElements; ++i) {
+                get_flat(i) += x.get_flat(i) + y.get_flat(i);
+            }
+        }
+
         static constexpr std::size_t NDims = sizeof...(Dimensions);
         static constexpr std::array<std::size_t, NDims> Dims = {{Dimensions...}};
-        static constexpr std::size_t NElements = (Dimensions * ...);
+        static constexpr std::size_t NElements = detail::NumElements<Dimensions...>;
 
         static constexpr std::size_t flatten_index(std::array<std::size_t, NDims> indices) noexcept {
             auto flat_index = std::size_t{0};
@@ -96,8 +152,75 @@ namespace scorch {
     };
 
     template<typename T, std::size_t... Dimensions>
+    TensorStorage<T, Dimensions...>& operator+=(TensorStorage<T, Dimensions...>& l, T r) noexcept {
+        for (auto i = std::size_t{0}; i < l.NElements; ++i) {
+            l.get_flat(i) += r;
+        }
+        return l;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    TensorStorage<T, Dimensions...>& operator-=(TensorStorage<T, Dimensions...>& l, T r) noexcept {
+        for (auto i = std::size_t{0}; i < l.NElements; ++i) {
+            l.get_flat(i) -= r;
+        }
+        return l;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    TensorStorage<T, Dimensions...>& operator*=(TensorStorage<T, Dimensions...>& l, T r) noexcept {
+        for (auto i = std::size_t{0}; i < l.NElements; ++i) {
+            l.get_flat(i) *= r;
+        }
+        return l;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    TensorStorage<T, Dimensions...>& operator/=(TensorStorage<T, Dimensions...>& l, T r) noexcept {
+        for (auto i = std::size_t{0}; i < l.NElements; ++i) {
+            l.get_flat(i) /= r;
+        }
+        return l;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    TensorStorage<T, Dimensions...>& operator+=(TensorStorage<T, Dimensions...>& l, const TensorStorage<T, Dimensions...>& r) noexcept {
+        for (auto i = std::size_t{0}; i < l.NElements; ++i) {
+            l.get_flat(i) += r.get_flat(i);
+        }
+        return l;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    TensorStorage<T, Dimensions...>& operator-=(TensorStorage<T, Dimensions...>& l, const TensorStorage<T, Dimensions...>& r) noexcept {
+        for (auto i = std::size_t{0}; i < l.NElements; ++i) {
+            l.get_flat(i) -= r.get_flat(i);
+        }
+        return l;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    TensorStorage<T, Dimensions...>& operator*=(TensorStorage<T, Dimensions...>& l, const TensorStorage<T, Dimensions...>& r) noexcept {
+        for (auto i = std::size_t{0}; i < l.NElements; ++i) {
+            l.get_flat(i) *= r.get_flat(i);
+        }
+        return l;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    TensorStorage<T, Dimensions...>& operator/=(TensorStorage<T, Dimensions...>& l, const TensorStorage<T, Dimensions...>& r) noexcept {
+        for (auto i = std::size_t{0}; i < l.NElements; ++i) {
+            l.get_flat(i) /= r.get_flat(i);
+        }
+        return l;
+    }
+
+    template<typename T, std::size_t... Dimensions>
     class Tensor {
     public:
+        using ValueType = T;
+        static constexpr bool Scalar = detail::IsScalar<Dimensions...>;
+
         using Storage = TensorStorage<T, Dimensions...>;
         using GradFunction = std::function<void(const Tensor<T, Dimensions...>&)>;
 
@@ -107,21 +230,26 @@ namespace scorch {
             , m_grad_fn(std::move(grad_fn)) {
         }
 
-        Tensor(std::enable_if_t<detail::IsScalar<Dimensions...>, T> scalar_value) noexcept
+        Tensor() noexcept
             : m_storage(std::make_shared<Storage>())
             , m_grad(std::make_shared<Storage>())
             , m_grad_fn(nullptr) {
 
-            (*m_storage)(0) = scalar_value;
         }
 
-        // TODO:
-        // - only allow if Dimensions... == 1
-        // - assert that m_grad is empty
-        // - call backward_impl
-        std::enable_if_t<detail::IsScalar<Dimensions...>, void>
-        backward() {
-            (*m_grad)(0) = T{1};
+
+        Tensor(T scalar_value) noexcept
+            : m_storage(std::make_shared<Storage>())
+            , m_grad(std::make_shared<Storage>())
+            , m_grad_fn(nullptr) {
+
+            static_assert(Scalar);
+            m_storage->item() = scalar_value;
+        }
+
+        void backward() {
+            static_assert(Scalar);
+            m_grad->item() = T{1};
             backward_impl();
         }
 
@@ -130,9 +258,31 @@ namespace scorch {
             return (*m_storage)(indices...);
         }
 
+        T& operator()(detail::MapNonTypeToType<Dimensions, std::size_t>... indices) noexcept {
+            assert(m_storage);
+            assert(!requires_grad());
+            return (*m_storage)(indices...);
+        }
+
         T get_flat(std::size_t flat_index) const noexcept {
             assert(m_storage);
             return m_storage->get_flat(flat_index);
+        }
+
+        T item() const noexcept {
+            static_assert(Scalar);
+            return m_storage->item();
+        }
+
+        Storage& value_mut() noexcept {
+            assert(m_storage);
+            assert(!requires_grad());
+            return *m_storage;
+        }
+
+        const Storage& value() const noexcept {
+            assert(m_storage);
+            return *m_storage;
         }
 
         const Storage& grad() const noexcept {
@@ -140,13 +290,19 @@ namespace scorch {
             return *m_grad;
         }
 
+        Storage& grad_mut() noexcept {
+            assert(m_grad);
+            assert(!requires_grad());
+            return *m_grad;
+        }
+
         bool requires_grad() const noexcept {
             return static_cast<bool>(m_grad_fn);
         }
 
-        static constexpr std::size_t NDims = sizeof...(Dimensions);
-        static constexpr std::array<std::size_t, NDims> Dims = {{Dimensions...}};
-        static constexpr std::size_t NElements = (Dimensions * ...);
+        static constexpr std::size_t NDims = Storage::NDims;
+        static constexpr std::array<std::size_t, NDims> Dims = Storage::Dims;
+        static constexpr std::size_t NElements = Storage::NElements;
 
     // private:
 
@@ -166,11 +322,14 @@ namespace scorch {
 
     template<typename T, std::size_t... Dimensions>
     std::ostream& operator<<(std::ostream& o, const TensorStorage<T, Dimensions...>& t) noexcept {
+        if constexpr (t.Scalar) {
+            o << t.item();
+            return o;
+        }
         auto fmt = std::ios{nullptr};
         fmt.copyfmt(o);
         auto flags = std::ios_base::fmtflags{o.flags()};
         o << std::setprecision(4) << std::fixed;
-        std::cout << std::setprecision(4) << std::fixed;
         const auto numColumns = t.Dims.back();
         const auto numRows = t.NElements / numColumns;
         auto prev_indices = t.unflatten_index(0);
@@ -257,12 +416,88 @@ namespace scorch {
         return o;
     }
 
+    namespace detail {
+
+        template<typename T>
+        struct IsTensorImpl {
+            static constexpr bool Value = false;
+        };
+
+        template<typename T, std::size_t... Dimensions>
+        struct IsTensorImpl<Tensor<T, Dimensions...>> {
+            static constexpr bool Value = true;
+        };
+
+        template<typename T>
+        constexpr bool IsTensor = IsTensorImpl<T>::Value;
+
+    } // namespace detail
+
+    template<typename... Parameters>
+    class Optimizer {
+    public:
+        static_assert((detail::IsTensor<Parameters> && ...));
+
+        Optimizer(const Parameters&... parameters)
+            : m_parameters(parameters...) {
+
+        }
+
+        virtual void zero_grad() = 0;
+
+        virtual void step() = 0;
+
+        std::tuple<Parameters...>& parameters() noexcept {
+            return m_parameters;
+        }
+
+        template<typename F>
+        void visit_parameters(F&& f) {
+            std::apply(
+                [c_f = std::forward<F>(f)](auto&... args){
+                    (c_f(args), ...);
+                },
+                m_parameters
+            );
+        }
+
+    private:
+        std::tuple<Parameters...> m_parameters;
+    };
+
+    template<typename T, typename... Parameters>
+    class SGD : public Optimizer<Parameters...> {
+    public:
+        SGD(T step_size, const Parameters&... parameters)
+            : m_step_size(step_size)
+            , Optimizer(parameters...) {
+
+        }
+
+        void zero_grad() override {
+            this->visit_parameters([](auto& param){
+                param.grad_mut().zero();
+            });
+        }
+
+        void step() override {
+            this->visit_parameters([this](auto& param){
+                param.value_mut().fma(-this->m_step_size, param.grad());
+            });
+        }
+
+    private:
+        T m_step_size;
+    };
+
+
+
     //------------------------------------------
 
     namespace detail {
 
         template<typename F, typename G, typename T, std::size_t... Dimensions>
-        Tensor<T, Dimensions...> elementwise_unary_function(F&& f, G&& g, const Tensor<T, Dimensions...>& x) {
+        Tensor<T, Dimensions...> elementwise_tensor(F&& f, G&& g, const Tensor<T, Dimensions...>& x) {
             // F : T => T
             static_assert(std::is_invocable_v<F, T>);
             static_assert(std::is_same_v<std::invoke_result_t<F, T>, T>);
@@ -302,7 +537,7 @@ namespace scorch {
         };
 
         template<typename F, typename G0, typename G1, typename T, std::size_t... Dimensions>
-        Tensor<T, Dimensions...> elementwise_binary_function(F&& f, G0&& g0, G1&& g1, const Tensor<T, Dimensions...>& x0, const Tensor<T, Dimensions...>& x1) {
+        Tensor<T, Dimensions...> elementwise_tensor_tensor(F&& f, G0&& g0, G1&& g1, const Tensor<T, Dimensions...>& x0, const Tensor<T, Dimensions...>& x1) {
             // F : T, T => T
             static_assert(std::is_invocable_v<F, T, T>);
             static_assert(std::is_same_v<std::invoke_result_t<F, T, T>, T>);
@@ -351,12 +586,70 @@ namespace scorch {
             return Tensor{std::move(ptr_output), std::move(ptr_grad_fn)};
         };
 
+        template<typename F, typename GT, typename GS, typename T, std::size_t... Dimensions>
+        Tensor<T, Dimensions...> elementwise_scalar_tensor(F&& f, GT&& gradient_tensor, GS&& gradient_scalar, const Tensor<T>& scalar, const Tensor<T, Dimensions...>& tensor) {
+            using TensorT = Tensor<T, Dimensions...>;
+            using Storage = TensorStorage<T, Dimensions...>;
+            using GradFn = std::function<void(const TensorT&)>;
+
+            // F : T, T => T
+            static_assert(std::is_invocable_v<F, T, T>);
+            static_assert(std::is_same_v<std::invoke_result_t<F, T, T>, T>);
+
+            // GT : T, T => T
+            static_assert(std::is_invocable_v<GT, T, T>);
+            static_assert(std::is_same_v<std::invoke_result_t<GT, T, T>, T>);
+
+            // GS : T, T => T
+            static_assert(std::is_invocable_v<GS, T, T>);
+            static_assert(std::is_same_v<std::invoke_result_t<GS, T, T>, T>);
+
+            auto ptr_output = std::make_shared<Storage>();
+            for (auto i = std::size_t{0}; i < ptr_output->NElements; ++i) {
+                ptr_output->get_flat(i) = f(scalar.item(), tensor.get_flat(i));
+            }
+
+            auto grad_fn = [
+                c_scalar = scalar,
+                c_tensor = tensor,
+                c_gradient_tensor = std::forward<GT>(gradient_tensor),
+                c_gradient_scalar = std::forward<GS>(gradient_scalar)
+            ](const TensorT& t) mutable {
+                assert(t.m_grad);
+                assert(c_scalar.m_grad);
+                assert(c_tensor.m_grad);
+
+                for (auto i = std::size_t{0}; i < t.NElements; ++i) {
+                    const auto s = c_scalar.item();
+                    const auto& t_i = c_tensor.get_flat(i);
+                    const auto& g_i = t.m_grad->get_flat(i);
+                    c_tensor.m_grad->get_flat(i) += c_gradient_tensor(s, t_i) * g_i;
+                    c_scalar.m_grad->item() += c_gradient_scalar(s, t_i) * g_i;
+                }
+
+                c_scalar.backward_impl();
+                c_tensor.backward_impl();
+            };
+
+            auto ptr_grad_fn = std::make_shared<GradFn>(std::move(grad_fn));
+
+            return Tensor{std::move(ptr_output), std::move(ptr_grad_fn)};
+        }
+
+        // y0 = a * t0
+        // y1 = a * t1
+        // y2 = a * t2
+
+        // 
+
     } // namespace detail
+
+    // UNARY OPERATORS
 
     // +x
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator+(const Tensor<T, Dimensions...>& x) noexcept {
-        return elementwise_unary_function(
+        return elementwise_tensor(
             // f
             [](T t){ return t; },
             // df/dt
@@ -368,7 +661,7 @@ namespace scorch {
     // -x
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator-(const Tensor<T, Dimensions...>& x) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [](T t){ return -t; },
             // df/dt
@@ -377,10 +670,12 @@ namespace scorch {
         );
     }
 
+    // BINARY OPERATORS WITH CONSTANTS
+
     // 1 + x
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator+(T l, const Tensor<T, Dimensions...>& r) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [c_l = l](T t){ return c_l + t; },
             // df/dt
@@ -392,7 +687,7 @@ namespace scorch {
     // x + 1
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator+(const Tensor<T, Dimensions...>& l, T r) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [c_r = r](T t){ return t + c_r; },
             // df/dt
@@ -404,7 +699,7 @@ namespace scorch {
     // 1 - x
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator-(T l, const Tensor<T, Dimensions...>& r) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [c_l = l](T t){ return c_l - t; },
             // df/dt
@@ -416,19 +711,19 @@ namespace scorch {
     // x - 1
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator-(const Tensor<T, Dimensions...>& l, T r) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [c_r = r](T t){ return t - c_r; },
             // df/dt
             [](T /* t */) { return T{1}; },
-            r
+            l
         );
     }
 
     // 1 * x
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator*(T l, const Tensor<T, Dimensions...>& r) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [c_l = l](T t){ return c_l * t; },
             // df/dt
@@ -440,7 +735,7 @@ namespace scorch {
     // x * 1
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator*(const Tensor<T, Dimensions...>& l, T r) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [c_r = r](T t){ return t * c_r; },
             // df/dt
@@ -452,7 +747,7 @@ namespace scorch {
     // x / 1
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator/(const Tensor<T, Dimensions...>& l, T r) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [c_r = r](T t){ return t / c_r; },
             // df/dt
@@ -461,10 +756,122 @@ namespace scorch {
         );
     }
 
+    // BINARY OPERATORS WITH SCALARS
+
+    // 1 + x
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> operator+(const Tensor<T>& scalar, const Tensor<T, Dimensions...>& tensor) noexcept {
+        return detail::elementwise_scalar_tensor(
+            // f
+            [](T s, T t){ return s + t; },
+            // df/dt
+            [](T /* s */, T /* t */){ return T{1}; },
+            // df/ds
+            [](T /* s */, T /* t */){ return T{1}; },
+            scalar,
+            tensor
+        );
+    }
+
+    // x + 1
+    template<typename T, std::size_t... Dimensions>
+    std::enable_if_t<(sizeof...(Dimensions) > 1),Tensor<T, Dimensions...>>
+    operator+(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
+        return detail::elementwise_scalar_tensor(
+            // f
+            [](T s, T t){ return s + t; },
+            // df/dt
+            [](T /* s */, T /* t */){ return T{1}; },
+            // df/ds
+            [](T /* s */, T /* t */){ return T{1}; },
+            scalar,
+            tensor
+        );
+    }
+
+    // 1 - x
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> operator-(const Tensor<T>& scalar, const Tensor<T, Dimensions...>& tensor) noexcept {
+        return detail::elementwise_scalar_tensor(
+            // f
+            [](T s, T t){ return s - t; },
+            // df/dt
+            [](T /* s */, T /* t */){ return T{-1}; },
+            // df/ds
+            [](T /* s */, T /* t */){ return T{1}; },
+            scalar,
+            tensor
+        );
+    }
+
+    // x - 1
+    template<typename T, std::size_t... Dimensions>
+    std::enable_if_t<(sizeof...(Dimensions) > 1),Tensor<T, Dimensions...>>
+    operator-(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
+        return detail::elementwise_scalar_tensor(
+            // f
+            [](T s, T t){ return t - s; },
+            // df/dt
+            [](T /* s */, T /* t */){ return T{1}; },
+            // df/ds
+            [](T /* s */, T /* t */){ return T{-1}; },
+            scalar,
+            tensor
+        );
+    }
+
+    // 1 * x
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> operator*(const Tensor<T>& scalar, const Tensor<T, Dimensions...>& tensor) noexcept {
+        return detail::elementwise_scalar_tensor(
+            // f
+            [](T s, T t){ return s * t; },
+            // df/dt
+            [](T s, T /* t */){ return s; },
+            // df/ds
+            [](T /* s */, T t){ return t; },
+            scalar,
+            tensor
+        );
+    }
+
+    // x * 1
+    template<typename T, std::size_t... Dimensions>
+    std::enable_if_t<(sizeof...(Dimensions) > 1),Tensor<T, Dimensions...>>
+    operator*(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
+        return detail::elementwise_scalar_tensor(
+            // f
+            [](T s, T t){ return s * t; },
+            // df/dt
+            [](T s, T /* t */){ return s; },
+            // df/ds
+            [](T /* s */, T t){ return t; },
+            scalar,
+            tensor
+        );
+    }
+
+    // x / 1
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> operator/(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
+        return detail::elementwise_scalar_tensor(
+            // f
+            [](T s, T t){ return t / s; },
+            // df/dt
+            [](T s, T /* t */){ return T{1} / s; },
+            // df/ds
+            [](T s, T t){ return -t / (s * s); },
+            scalar,
+            tensor
+        );
+    }
+
+    // ELEMENTWISE UNARY FUNCTIONS
+
     // abs(x)
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> abs(const Tensor<T, Dimensions...>& x) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [](T t){ return std::abs(t); },
             // df/dt
@@ -479,9 +886,10 @@ namespace scorch {
         );
     }
 
+    // exp(x)
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> exp(const Tensor<T, Dimensions...>& x) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [](T t){ return std::exp(t); },
             // df/dt
@@ -490,9 +898,10 @@ namespace scorch {
         );
     }
 
+    // log(x)
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> log(const Tensor<T, Dimensions...>& x) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [](T t){ return std::log(t); },
             // df/dt
@@ -501,9 +910,10 @@ namespace scorch {
         );
     }
 
+    // square(x)
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> square(const Tensor<T, Dimensions...>& x) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [](T t){ return t * t; },
             // df/dt
@@ -512,9 +922,10 @@ namespace scorch {
         );
     }
 
+    // sqrt(x)
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> sqrt(const Tensor<T, Dimensions...>& x) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [](T t){ return std::sqrt(t); },
             // df/dt
@@ -523,9 +934,10 @@ namespace scorch {
         );
     }
 
+    // sin(x)
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> sin(const Tensor<T, Dimensions...>& x) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [](T t){ return std::sin(t); },
             // df/dt
@@ -534,20 +946,25 @@ namespace scorch {
         );
     }
 
+    // cos(x)
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> cos(const Tensor<T, Dimensions...>& x) noexcept {
-        return detail::elementwise_unary_function(
+        return detail::elementwise_tensor(
             // f
             [](T t){ return std::cos(t); },
             // df/dt
-            [](T t) { return std::-sin(x); },
+            [](T t) { return -std::sin(t); },
             x
         );
     }
 
+    // ELEMENTWISE BINARY OPERATIONS WITH TWO TENSORS
+
+    // x + y
     template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> operator+(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
-        return detail::elementwise_binary_function(
+    std::enable_if_t<(sizeof...(Dimensions) > 0), Tensor<T, Dimensions...>>
+    operator+(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
+        return detail::elementwise_tensor_tensor(
             // f
             [](T t0, T t1) { return t0 + t1; },
             // df/dt0
@@ -559,9 +976,11 @@ namespace scorch {
         );
     }
 
+    // x - y
     template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> operator-(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
-        return detail::elementwise_binary_function(
+    std::enable_if_t<(sizeof...(Dimensions) > 0), Tensor<T, Dimensions...>>
+    operator-(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
+        return detail::elementwise_tensor_tensor(
             // f
             [](T t0, T t1) { return t0 - t1; },
             // df/dt0
@@ -573,9 +992,11 @@ namespace scorch {
         );
     }
 
+    // x * y
     template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> operator*(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
-        return detail::elementwise_binary_function(
+    std::enable_if_t<(sizeof...(Dimensions) > 0), Tensor<T, Dimensions...>>
+    operator*(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
+        return detail::elementwise_tensor_tensor(
             // f
             [](T t0, T t1) { return t0 * t1; },
             // df/dt0
@@ -587,9 +1008,11 @@ namespace scorch {
         );
     }
 
+    // x / y
     template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> operator/(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
-        return detail::elementwise_binary_function(
+    std::enable_if_t<(sizeof...(Dimensions) > 0), Tensor<T, Dimensions...>>
+    operator/(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
+        return detail::elementwise_tensor_tensor(
             // f
             [](T t0, T t1) { return t0 / t1; },
             // df/dt0
@@ -601,8 +1024,119 @@ namespace scorch {
         );
     }
 
-    // y = a / b = a * b^-1
-    // dy/da = 1/b
-    // dy/db = -b / a^2
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T> sum(const Tensor<T, Dimensions...> x) noexcept {
+        using OutputTensorT = Tensor<T>;
+        using OutputStorage = TensorStorage<T>;
+        using GradFn = std::function<void(const OutputTensorT&)>;
+
+        auto ptr_output = std::make_shared<OutputStorage>();
+        for (auto i = std::size_t{0}; i < x.NElements; ++i) {
+            ptr_output->item() += x.get_flat(i);
+        }
+
+        auto grad_fn = [
+            c_x = x
+        ](const OutputTensorT& t) mutable {
+            assert(t.m_grad);
+            assert(c_x.m_grad);
+
+            const auto& g = t.m_grad->item();
+            for (auto i = std::size_t{0}; i < c_x.NElements; ++i) {
+                const auto& x_i = c_x.get_flat(i);
+                c_x.m_grad->get_flat(i) += g;
+            }
+
+            c_x.backward_impl();
+        };
+
+        auto ptr_grad_fn = std::make_shared<GradFn>(std::move(grad_fn));
+
+        return OutputTensorT{std::move(ptr_output), std::move(ptr_grad_fn)};
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T> mean(const Tensor<T, Dimensions...> x) noexcept {
+        using OutputTensorT = Tensor<T>;
+        using OutputStorage = TensorStorage<T>;
+        using GradFn = std::function<void(const OutputTensorT&)>;
+
+        const auto k = T{1} / static_cast<T>(x.NElements);
+
+        auto ptr_output = std::make_shared<OutputStorage>();
+        for (auto i = std::size_t{0}; i < x.NElements; ++i) {
+            ptr_output->item() += x.get_flat(i);
+        }
+
+        ptr_output->item() *= k;
+
+        auto grad_fn = [
+            c_x = x,
+        ](const OutputTensorT& t) mutable {
+            assert(t.m_grad);
+            assert(c_x.m_grad);
+            const auto kk = T{1} / static_cast<T>(x.NElements);
+
+            const auto& g = t.m_grad->item();
+            for (auto i = std::size_t{0}; i < c_x.NElements; ++i) {
+                const auto& x_i = c_x.get_flat(i);
+                c_x.m_grad->get_flat(i) += g * kk;
+            }
+
+            c_x.backward_impl();
+        };
+
+        auto ptr_grad_fn = std::make_shared<GradFn>(std::move(grad_fn));
+
+        return OutputTensorT{std::move(ptr_output), std::move(ptr_grad_fn)};
+    }
+
+    template<typename T, std::size_t F_out, std::size_t F_in, std::size_t... OtherDimensions>
+    Tensor<T, OtherDimensions..., F_out> matvecmul(const Tensor<T, OtherDimensions..., F_in>& input, const Tensor<T, F_out, F_in>& matrix) noexcept {
+        using InputTensorT = Tensor<T, OtherDimensions..., F_in>;
+        using OutputTensorT = Tensor<T, OtherDimensions..., F_out>;
+        using OutputStorage = TensorStorage<T, OtherDimensions..., F_out>;
+        using GradFn = std::function<void(const OutputTensorT&)>;
+
+        auto ptr_output = std::make_shared<OutputStorage>();
+        for (auto b = std::size_t{0}, bEnd = (input.NElements / F_in); b < bEnd; ++b) {
+            for (auto i = std::size_t{0}; i < F_out; ++i) {
+                auto& y_i = ptr_output->get_flat(b * F_out + i);
+                for (auto j = std::size_t{0}; j < F_in; ++j) {
+                    const auto& x_j = input.get_flat(b * F_in + j);
+                    const auto& m_i_j = matrix(i, j);
+                    y_i += m_i_j * x_j;
+                }
+            }
+        }
+
+        auto grad_fn = [
+            c_input = input,
+            c_matrix = matrix
+        ](const OutputTensorT& t) mutable {
+            assert(t.m_grad);
+            assert(c_matrix.m_grad);
+            assert(c_input.m_grad);
+
+            for (auto b = std::size_t{0}, bEnd = (c_input.NElements / F_in); b < bEnd; ++b) {
+                for (auto i = std::size_t{0}; i < F_out; ++i) {
+                    for (auto j = std::size_t{0}; j < F_in; ++j) {
+                        const auto& x_j = c_input.get_flat(b * F_in + j);
+                        const auto& m_i_j = c_matrix(i, j);
+                        const auto& g = t.grad().get_flat(b * F_out + i);
+                        c_matrix.grad_mut()(i, j) += x_j * g;
+                        c_input.grad_mut().get_flat(b * F_in + j) += m_i_j * g;
+                    }
+                }
+            }
+
+            c_input.backward_impl();
+            c_matrix.backward_impl();
+        };
+
+        auto ptr_grad_fn = std::make_shared<GradFn>(std::move(grad_fn));
+
+        return OutputTensorT{std::move(ptr_output), std::move(ptr_grad_fn)};
+    }
 
 } // namespace scorch

@@ -6,20 +6,33 @@
 
 
 int main() {
-    auto a = scorch::Tensor<float, 1>{0.0f};
-    auto b = scorch::Tensor<float, 1>{3.0f};
 
-    std::cout << "a = " << a << std::endl;
-    std::cout << "b = " << b << std::endl;
+    auto A = scorch::Tensor<float, 2, 2>{};
+    A(0, 0) = 1.0f;
+    A(0, 1) = 0.0f;
+    A(1, 0) = 0.0f;
+    A(1, 1) = 1.0f;
 
-    auto y = exp((sin(a * a) + b) / 4.0f) + 9.5f;
+    auto x = scorch::Tensor<float, 2>{};
+    x(0) = 3.0f;
+    x(1) = 5.0f;
 
-    std::cout << "y = " << y << std::endl;
+    auto opt = scorch::SGD(0.01f, x);
 
-    y.backward();
+    for (auto i = 0; i < 1000; ++i) {
+        auto y = sum(square(matvecmul(x, A)));
 
-    std::cout << "dy/da = " << a.grad() << std::endl;
-    std::cout << "dy/db = " << b.grad() << std::endl;
+        static_assert(y.Scalar);
+
+        opt.zero_grad();
+
+        y.backward();
+
+        opt.step();
+
+        std::cout << "x = " << x;
+        std::cout << "  y = " << y << std::endl;
+    }
 
 
     // auto t = scorch::TensorStorage<float, 1, 2, 3, 4>{};
