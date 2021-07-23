@@ -10,15 +10,16 @@
 #include <iomanip>
 #include <ios>
 #include <memory>
+#include <random>
 #include <type_traits>
 #include <vector>
-
-#include <gsl/span>
-
 
 namespace scorch {
 
     namespace detail {
+
+        std::random_device randDev;
+        std::default_random_engine randEng{randDev()};
 
         template<auto Dummy, typename T>
         struct MapNonTypeToTypeImpl {
@@ -276,7 +277,6 @@ namespace scorch {
 
         Storage& value_mut() noexcept {
             assert(m_storage);
-            assert(!requires_grad());
             return *m_storage;
         }
 
@@ -292,7 +292,6 @@ namespace scorch {
 
         Storage& grad_mut() noexcept {
             assert(m_grad);
-            assert(!requires_grad());
             return *m_grad;
         }
 
@@ -319,6 +318,59 @@ namespace scorch {
         std::shared_ptr<Storage> m_grad;
         std::shared_ptr<GradFunction> m_grad_fn;
     };
+
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> copy(Tensor<T, Dimensions...>& src) noexcept {
+        auto t = Tensor<T, Dimensions...>{};
+        for (auto i = std::size_t{0}; i < t.NElements; ++i) {
+            t.value_mut().get_flat(i) = src.get_flat(i);
+        }
+        return t;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> rand(T low_value = T{0}, T high_value = T{1}) noexcept {
+        auto t = Tensor<T, Dimensions...>{};
+        auto d = std::uniform_real_distribution<T>(low_value, high_value);
+        for (auto i = std::size_t{0}; i < t.NElements; ++i) {
+            t.value_mut().get_flat(i) = d(detail::randEng);
+        }
+        return t;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> rand_like(const Tensor<T, Dimensions...>& /* unused */, T low_value = T{0}, T high_value = T{1}) noexcept {
+        auto t = Tensor<T, Dimensions...>{};
+        auto d = std::uniform_real_distribution<T>(low_value, high_value);
+        for (auto i = std::size_t{0}; i < t.NElements; ++i) {
+            t.value_mut().get_flat(i) = d(detail::randEng);
+        }
+        return t;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> zeros() noexcept {
+        return Tensor<T, Dimensions...>{};
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> zeros_like(const Tensor<T, Dimensions...>& /* unused */) noexcept {
+        return Tensor<T, Dimensions...>{};
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> ones() noexcept {
+        auto t = Tensor<T, Dimensions...>{};
+        t.value_mut().fill(T{1});
+        return t;
+    }
+
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> ones_like(const Tensor<T, Dimensions...>& /* unused */) noexcept {
+        auto t = Tensor<T, Dimensions...>{};
+        t.value_mut().fill(T{1});
+        return t;
+    }
 
     template<typename T, std::size_t... Dimensions>
     std::ostream& operator<<(std::ostream& o, const TensorStorage<T, Dimensions...>& t) noexcept {
@@ -958,6 +1010,21 @@ namespace scorch {
         );
     }
 
+    // cos(x)
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> sigmoid(const Tensor<T, Dimensions...>& x) noexcept {
+        return detail::elementwise_tensor(
+            // f
+            [](T t){ return T{1} / (T{1} + std::exp(-t)); },
+            // df/dt
+            [](T t) {
+                const auto s = T{1} / (T{1} + std::exp(-t));
+                return s * (T{1} - s);
+            },
+            x
+        );
+    }
+
     // ELEMENTWISE BINARY OPERATIONS WITH TWO TENSORS
 
     // x + y
@@ -1137,6 +1204,11 @@ namespace scorch {
         auto ptr_grad_fn = std::make_shared<GradFn>(std::move(grad_fn));
 
         return OutputTensorT{std::move(ptr_output), std::move(ptr_grad_fn)};
+    }
+
+    template<typename T, std::size_t F_out, std::size_t F_in, std::size_t... OtherDimensions>
+    Tensor<T, OtherDimensions..., F_out> operator%(const Tensor<T, OtherDimensions..., F_in>& input, const Tensor<T, F_out, F_in>& matrix) noexcept {
+        return matvecmul(input, matrix);
     }
 
 } // namespace scorch

@@ -7,26 +7,30 @@
 
 int main() {
 
-    auto A = scorch::Tensor<float, 2, 2>{};
-    A(0, 0) = 1.0f;
-    A(0, 1) = 0.0f;
-    A(1, 0) = 0.0f;
-    A(1, 1) = 1.0f;
+    constexpr std::size_t InputDim = 4;
+    constexpr std::size_t HiddenDim = 16;
+    constexpr std::size_t OutputDim = 4;
 
-    auto x = scorch::Tensor<float, 2>{};
-    x(0) = 3.0f;
-    x(1) = 5.0f;
+    auto W0 = scorch::rand<float, HiddenDim, InputDim>();
+    auto b0 = scorch::rand<float, HiddenDim>();
+    auto W1 = scorch::rand<float, OutputDim, HiddenDim>();
+    auto b1 = scorch::rand<float, OutputDim>();
 
-    auto opt = scorch::SGD(0.01f, x);
+    auto opt = scorch::SGD(0.01f, W0, b0, W1, b1);
 
     for (auto i = 0; i < 1000; ++i) {
-        auto y = sum(square(matvecmul(x, A)));
+        auto x = scorch::rand<float, InputDim>();
+        auto y = copy(x);
 
-        static_assert(y.Scalar);
+        auto y_hat = sigmoid(x % W0 + b0) % W1 + b1;
+
+        auto l = sum(square(y_hat - y));
+
+        static_assert(l.Scalar);
 
         opt.zero_grad();
 
-        y.backward();
+        l.backward();
 
         opt.step();
 

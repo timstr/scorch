@@ -13,7 +13,6 @@ set(scorch_srcs
 add_library(scorch STATIC ${scorch_includes} ${scorch_srcs})
 target_include_directories(scorch
 	PUBLIC include
-	PUBLIC gsl/include
 )
 set_property(TARGET scorch PROPERTY CXX_STANDARD 17)
 set_target_properties(scorch PROPERTIES LINKER_LANGUAGE CXX)
