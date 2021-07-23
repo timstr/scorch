@@ -552,26 +552,34 @@ namespace scorch {
 
     namespace detail {
 
-        template<typename SequenceA, typename SequenceB>
-        struct SameEndingImpl {
+        template<typename SequenceA, typename SequenceB, typename Enable = void>
+        struct EndsWithImpl {
             static constexpr bool Value = false;
         };
 
-        template<std::size_t S>
-        struct SameEndingImpl<std::index_sequence<S>, std::index_sequence<S>> {
+        template<std::size_t... S>
+        struct EndsWithImpl<std::index_sequence<S...>, std::index_sequence<S...>> {
             static constexpr bool Value = true;
         };
 
-        template<std::size_t S, std::size_t... A, std::size_t... B>
-        struct SameEndingImpl<std::index_sequence<S, A...>, std::index_sequence<S, B...>> {
-            static constexpr bool Value = SameEndingImpl<
+        template<
+            std::size_t S,
+            std::size_t... A,
+            std::size_t... B
+        >
+        struct EndsWithImpl<
+            std::index_sequence<S, A...>,
+            std::index_sequence<B...>,
+            std::enable_if_t<sizeof...(A) >= sizeof...(B)>
+        > {
+            static constexpr bool Value = EndsWithImpl<
                 std::index_sequence<A...>,
-                std::index_sequence<B...>,
+                std::index_sequence<B...>
             >::Value;
         };
 
         template<typename IndexSequenceA, typename IndexSequenceB>
-        constexpr bool SameEnding = SameEndingImpl<IndexSequenceA, IndexSequenceB>::Value;
+        constexpr bool EndsWith = EndsWithImpl<IndexSequenceA, IndexSequenceB>::Value;
 
         template<typename F, typename G, typename T, std::size_t... Dimensions>
         Tensor<T, Dimensions...> elementwise_tensor(F&& f, G&& g, const Tensor<T, Dimensions...>& x) {
@@ -613,12 +621,22 @@ namespace scorch {
             return Tensor{std::move(ptr_output), std::move(ptr_grad_fn)};
         };
 
-        template<typename F, typename G0, typename G1, typename T, std::size_t... Dimensions>
-        Tensor<T, Dimensions...> elementwise_tensor_tensor(F&& f, G0&& g0, G1&& g1, const Tensor<T, Dimensions...>& x0, const Tensor<T, Dimensions...>& x1) {
-            // TODO:
-            // - take dimensions for x0 and x1 separately,
-            // - assert that they have the same ending
-            // - loop over any outer dimensions, like matvecmul
+        template<typename F, typename G0, typename G1, typename T, std::size_t... Dimensions0, std::size_t... Dimensions1>
+        auto elementwise_tensor_tensor(F&& f, G0&& g0, G1&& g1, const Tensor<T, Dimensions0...>& x0, const Tensor<T, Dimensions1...>& x1) {
+            static_assert(
+                EndsWith<
+                    std::index_sequence<Dimensions0...>,
+                    std::index_sequence<Dimensions1...>
+                > || EndsWith<
+                    std::index_sequence<Dimensions1...>,
+                    std::index_sequence<Dimensions0...>
+                >
+            );
+
+            constexpr auto Size0 = x0.NElements;
+            constexpr auto Size1 = x1.NElements;
+            constexpr auto InnerSize = (Size0 < Size1) ? Size0 : Size1;
+            constexpr auto OuterSize = (Size0 > Size1) ? Size0 : Size1;
 
             // F : T, T => T
             static_assert(std::is_invocable_v<F, T, T>);
@@ -632,13 +650,24 @@ namespace scorch {
             static_assert(std::is_invocable_v<G1, T, T>);
             static_assert(std::is_same_v<std::invoke_result_t<G1, T, T>, T>);
 
-            using TensorT = Tensor<T, Dimensions...>;
-            using Storage = TensorStorage<T, Dimensions...>;
-            using GradFn = std::function<void(const TensorT&)>;
+            using OutputTensorT = std::conditional_t<
+                (sizeof...(Dimensions0) > sizeof...(Dimensions1)),
+                Tensor<T, Dimensions0...>,
+                Tensor<T, Dimensions1...>
+            >;
+            using Storage = typename OutputTensorT::Storage;
+            using GradFn = std::function<void(const OutputTensorT&)>;
 
             auto ptr_output = std::make_shared<Storage>();
-            for (auto i = std::size_t{0}; i < ptr_output->NElements; ++i) {
-                ptr_output->get_flat(i) = f(x0.get_flat(i), x1.get_flat(i));
+            for (auto i = std::size_t{0}, iEnd = (OuterSize / InnerSize); i < iEnd; ++i) {
+                for (auto j = std::size_t{0}; j < InnerSize; ++j) {
+                    const auto ii = i * InnerSize + j;
+                    if constexpr (Size0 < Size1) {
+                        ptr_output->get_flat(ii) = f(x0.get_flat(j), x1.get_flat(ii));
+                    } else {
+                        ptr_output->get_flat(ii) = f(x0.get_flat(ii), x1.get_flat(j));
+                    }
+                }
             }
 
             auto grad_fn = [
@@ -646,17 +675,32 @@ namespace scorch {
                 c_x1 = x1,
                 c_g0 = std::forward<G0>(g0),
                 c_g1 = std::forward<G1>(g1)
-            ](const TensorT& t) mutable {
+            ](const OutputTensorT& t) mutable {
                 assert(t.m_grad);
                 assert(c_x0.m_grad);
                 assert(c_x1.m_grad);
 
-                for (auto i = std::size_t{0}; i < t.NElements; ++i) {
-                    const auto& x0_i = c_x0.get_flat(i);
-                    const auto& x1_i = c_x1.get_flat(i);
-                    const auto& g_i = t.m_grad->get_flat(i);
-                    c_x0.m_grad->get_flat(i) += c_g0(x0_i, x1_i) * g_i;
-                    c_x1.m_grad->get_flat(i) += c_g1(x0_i, x1_i) * g_i;
+                constexpr auto Size0 = c_x0.NElements;
+                constexpr auto Size1 = c_x1.NElements;
+                constexpr auto InnerSize = (Size0 < Size1) ? Size0 : Size1;
+                constexpr auto OuterSize = (Size0 > Size1) ? Size0 : Size1;
+
+                for (auto i = std::size_t{0}, iEnd = (OuterSize / InnerSize); i < iEnd; ++i) {
+                    for (auto j = std::size_t{0}; j < InnerSize; ++j) {
+                        const auto ii = i * InnerSize + j;
+                        const auto& g = t.m_grad->get_flat(ii);
+                        if constexpr (Size0 < Size1) {
+                            const auto& x0_v = c_x0.get_flat(j);
+                            const auto& x1_v = c_x1.get_flat(ii);
+                            c_x0.m_grad->get_flat(j) += c_g0(x0_v, x1_v) * g;
+                            c_x1.m_grad->get_flat(ii) += c_g0(x0_v, x1_v) * g;
+                        } else {
+                            const auto& x0_v = c_x0.get_flat(ii);
+                            const auto& x1_v = c_x1.get_flat(j);
+                            c_x0.m_grad->get_flat(ii) += c_g0(x0_v, x1_v) * g;
+                            c_x1.m_grad->get_flat(j) += c_g0(x0_v, x1_v) * g;
+                        }
+                    }
                 }
 
                 c_x0.backward_impl();
@@ -665,7 +709,7 @@ namespace scorch {
 
             auto ptr_grad_fn = std::make_shared<GradFn>(std::move(grad_fn));
 
-            return Tensor{std::move(ptr_output), std::move(ptr_grad_fn)};
+            return OutputTensorT{std::move(ptr_output), std::move(ptr_grad_fn)};
         };
 
         template<typename F, typename GT, typename GS, typename T, std::size_t... Dimensions>
@@ -846,114 +890,6 @@ namespace scorch {
 
     // BINARY OPERATORS WITH SCALARS
 
-    // 1 + x
-    template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> operator+(const Tensor<T>& scalar, const Tensor<T, Dimensions...>& tensor) noexcept {
-        return detail::elementwise_scalar_tensor(
-            // f
-            [](T s, T t){ return s + t; },
-            // df/dt
-            [](T /* s */, T /* t */){ return T{1}; },
-            // df/ds
-            [](T /* s */, T /* t */){ return T{1}; },
-            scalar,
-            tensor
-        );
-    }
-
-    // x + 1
-    template<typename T, std::size_t... Dimensions>
-    std::enable_if_t<(sizeof...(Dimensions) > 1),Tensor<T, Dimensions...>>
-    operator+(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
-        return detail::elementwise_scalar_tensor(
-            // f
-            [](T s, T t){ return s + t; },
-            // df/dt
-            [](T /* s */, T /* t */){ return T{1}; },
-            // df/ds
-            [](T /* s */, T /* t */){ return T{1}; },
-            scalar,
-            tensor
-        );
-    }
-
-    // 1 - x
-    template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> operator-(const Tensor<T>& scalar, const Tensor<T, Dimensions...>& tensor) noexcept {
-        return detail::elementwise_scalar_tensor(
-            // f
-            [](T s, T t){ return s - t; },
-            // df/dt
-            [](T /* s */, T /* t */){ return T{-1}; },
-            // df/ds
-            [](T /* s */, T /* t */){ return T{1}; },
-            scalar,
-            tensor
-        );
-    }
-
-    // x - 1
-    template<typename T, std::size_t... Dimensions>
-    std::enable_if_t<(sizeof...(Dimensions) > 1),Tensor<T, Dimensions...>>
-    operator-(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
-        return detail::elementwise_scalar_tensor(
-            // f
-            [](T s, T t){ return t - s; },
-            // df/dt
-            [](T /* s */, T /* t */){ return T{1}; },
-            // df/ds
-            [](T /* s */, T /* t */){ return T{-1}; },
-            scalar,
-            tensor
-        );
-    }
-
-    // 1 * x
-    template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> operator*(const Tensor<T>& scalar, const Tensor<T, Dimensions...>& tensor) noexcept {
-        return detail::elementwise_scalar_tensor(
-            // f
-            [](T s, T t){ return s * t; },
-            // df/dt
-            [](T s, T /* t */){ return s; },
-            // df/ds
-            [](T /* s */, T t){ return t; },
-            scalar,
-            tensor
-        );
-    }
-
-    // x * 1
-    template<typename T, std::size_t... Dimensions>
-    std::enable_if_t<(sizeof...(Dimensions) > 1),Tensor<T, Dimensions...>>
-    operator*(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
-        return detail::elementwise_scalar_tensor(
-            // f
-            [](T s, T t){ return s * t; },
-            // df/dt
-            [](T s, T /* t */){ return s; },
-            // df/ds
-            [](T /* s */, T t){ return t; },
-            scalar,
-            tensor
-        );
-    }
-
-    // x / 1
-    template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> operator/(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
-        return detail::elementwise_scalar_tensor(
-            // f
-            [](T s, T t){ return t / s; },
-            // df/dt
-            [](T s, T /* t */){ return T{1} / s; },
-            // df/ds
-            [](T s, T t){ return -t / (s * s); },
-            scalar,
-            tensor
-        );
-    }
-
     // x ^ 1
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> operator^(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
@@ -1079,9 +1015,8 @@ namespace scorch {
     // ELEMENTWISE BINARY OPERATIONS WITH TWO TENSORS
 
     // x + y
-    template<typename T, std::size_t... Dimensions>
-    std::enable_if_t<(sizeof...(Dimensions) > 0), Tensor<T, Dimensions...>>
-    operator+(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
+    template<typename T, std::size_t... Dimensions0, std::size_t... Dimensions1>
+    auto operator+(const Tensor<T, Dimensions0...>& l, const Tensor<T, Dimensions1...>& r) noexcept {
         return detail::elementwise_tensor_tensor(
             // f
             [](T t0, T t1) { return t0 + t1; },
@@ -1095,9 +1030,8 @@ namespace scorch {
     }
 
     // x - y
-    template<typename T, std::size_t... Dimensions>
-    std::enable_if_t<(sizeof...(Dimensions) > 0), Tensor<T, Dimensions...>>
-    operator-(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
+    template<typename T, std::size_t... Dimensions0, std::size_t... Dimensions1>
+    auto operator-(const Tensor<T, Dimensions0...>& l, const Tensor<T, Dimensions1...>& r) noexcept {
         return detail::elementwise_tensor_tensor(
             // f
             [](T t0, T t1) { return t0 - t1; },
@@ -1111,9 +1045,8 @@ namespace scorch {
     }
 
     // x * y
-    template<typename T, std::size_t... Dimensions>
-    std::enable_if_t<(sizeof...(Dimensions) > 0), Tensor<T, Dimensions...>>
-    operator*(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
+    template<typename T, std::size_t... Dimensions0, std::size_t... Dimensions1>
+    auto operator*(const Tensor<T, Dimensions0...>& l, const Tensor<T, Dimensions1...>& r) noexcept {
         return detail::elementwise_tensor_tensor(
             // f
             [](T t0, T t1) { return t0 * t1; },
@@ -1127,9 +1060,8 @@ namespace scorch {
     }
 
     // x / y
-    template<typename T, std::size_t... Dimensions>
-    std::enable_if_t<(sizeof...(Dimensions) > 0), Tensor<T, Dimensions...>>
-    operator/(const Tensor<T, Dimensions...>& l, const Tensor<T, Dimensions...>& r) noexcept {
+    template<typename T, std::size_t... Dimensions0, std::size_t... Dimensions1>
+    auto operator/(const Tensor<T, Dimensions0...>& l, const Tensor<T, Dimensions1...>& r) noexcept {
         return detail::elementwise_tensor_tensor(
             // f
             [](T t0, T t1) { return t0 / t1; },
@@ -1258,8 +1190,8 @@ namespace scorch {
                     OtherInputDimensions...
                 >,
                 std::index_sequence<
-                    InputDimension0,
-                    OutputDimensions...
+                    OutputDimensions...,
+                    InputDimension0
                 >
             >::Type;
         };
@@ -1274,7 +1206,7 @@ namespace scorch {
             std::index_sequence<InputDimension>,
             std::index_sequence<OutputDimensions...>
         > {
-            using Type = std::index_sequence<OutputDimensions..., InputDimension>;
+            using Type = std::index_sequence<OutputDimensions..., NewLastDimension>;
         };
 
         template<std::size_t NewLastDimension, std::size_t... Dimensions>

@@ -6,11 +6,7 @@ set(scorch_includes
     include/scorch.hpp
 )
 
-set(scorch_srcs
-    src/scorch.cpp
-)
-
-add_library(scorch STATIC ${scorch_includes} ${scorch_srcs})
+add_library(scorch STATIC ${scorch_includes})
 target_include_directories(scorch
 	PUBLIC include
 )
