@@ -61,7 +61,7 @@ Notable features:
  - Optimizers (only SGD for now)
  - Tested with MSVC, GCC, and Clang
 
-\* Broadcasting semantics are only supported for pairs of tensors whose shapes are identical except that one may have additional higher dimensions. For example, a size 3x5x7 tensor is broadcastable with a size 5x7 tensor and a size 7 tensor, but a size 3x5x7 tensor is **not** broadcastable with a size 1x1x7 tensor, or a size 1x1x1 tensor
+\* Broadcasting semantics are only supported for pairs of tensors whose shapes are identical except that one may have additional higher dimensions. For example, a size 3x5x7 tensor is broadcastable with a size 5x7 tensor and a size 7 tensor, but a size 3x5x7 tensor is **not** broadcastable with a size 1x1x7 tensor, or a size 1x1x1 tensor.
 
 Features that are not supported but are probably coming soon:
  - Tensor views, clever indexing, and differentiation through tensor scalar element access
@@ -69,6 +69,7 @@ Features that are not supported but are probably coming soon:
  - Matrix-matrix multiplication
  - Some remaining basic mathematical functions (e.g. `cbrt`, `atan`, etc...)
  - Smarter optimizers (e.g. Adam, RMSProp, if I can understand them)
+ - Higher-order derivatives (maybe)
 
 Features that not supported and probably never will be:
  - GPU acceleration
