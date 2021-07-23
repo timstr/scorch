@@ -7,24 +7,31 @@
 
 int main() {
 
-    constexpr std::size_t InputDim = 4;
-    constexpr std::size_t HiddenDim = 16;
-    constexpr std::size_t OutputDim = 4;
+    // constexpr std::size_t InputDim = 1;
+    // constexpr std::size_t HiddenDim = 16;
+    // constexpr std::size_t OutputDim = 1;
 
-    auto W0 = scorch::rand<float, HiddenDim, InputDim>();
-    auto b0 = scorch::rand<float, HiddenDim>();
-    auto W1 = scorch::rand<float, OutputDim, HiddenDim>();
-    auto b1 = scorch::rand<float, OutputDim>();
+    // auto W0 = scorch::rand<float, HiddenDim, InputDim>();
+    // auto b0 = scorch::rand<float, HiddenDim>();
+    // auto W1 = scorch::rand<float, OutputDim, HiddenDim>();
+    // auto b1 = scorch::rand<float, OutputDim>();
 
-    auto opt = scorch::SGD(0.01f, W0, b0, W1, b1);
+    constexpr std::size_t D = 8;
+    auto A = scorch::rand<float, D, D>();
+
+    auto opt = scorch::SGD(0.1f, 0.8f, A);
 
     for (auto i = 0; i < 1000; ++i) {
-        auto x = scorch::rand<float, InputDim>();
+        constexpr std::size_t B = 1024;
+
+        // auto x = scorch::rand<float, InputDim>();
+        auto x = scorch::rand<float, B, D>();
         auto y = copy(x);
 
-        auto y_hat = sigmoid(x % W0 + b0) % W1 + b1;
+        // auto y_hat = sigmoid(x % W0 + b0) % W1 + b1;
+        auto y_hat = x % A;
 
-        auto l = sum(square(y_hat - y));
+        auto l = mean((y_hat - y) ^ 2.0f);
 
         static_assert(l.Scalar);
 
@@ -34,8 +41,10 @@ int main() {
 
         opt.step();
 
-        std::cout << "x = " << x;
-        std::cout << "  y = " << y << std::endl;
+        std::cout << "l = " << l << std::endl;
+        std::cout << "A = " << A << std::endl;
+        // std::cout << "  x = " << x << std::endl;
+        // std::cout << "  y = " << y << std::endl;
     }
 
 

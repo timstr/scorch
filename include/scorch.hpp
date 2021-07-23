@@ -449,7 +449,9 @@ namespace scorch {
                 }
             }
 
-            o << '\n';
+            if (row + 1 < numRows) {
+                o << '\n';
+            }
 
             prev_indices = indices;
         }
@@ -520,15 +522,16 @@ namespace scorch {
     template<typename T, typename... Parameters>
     class SGD : public Optimizer<Parameters...> {
     public:
-        SGD(T step_size, const Parameters&... parameters)
+        SGD(T step_size, T momentum, const Parameters&... parameters)
             : m_step_size(step_size)
+            , m_momentum(momentum)
             , Optimizer(parameters...) {
 
         }
 
         void zero_grad() override {
-            this->visit_parameters([](auto& param){
-                param.grad_mut().zero();
+            this->visit_parameters([this](auto& param){
+                param.grad_mut() *= this->m_momentum;
             });
         }
 
@@ -540,6 +543,7 @@ namespace scorch {
 
     private:
         T m_step_size;
+        T m_momentum;
     };
 
 
@@ -547,6 +551,27 @@ namespace scorch {
     //------------------------------------------
 
     namespace detail {
+
+        template<typename SequenceA, typename SequenceB>
+        struct SameEndingImpl {
+            static constexpr bool Value = false;
+        };
+
+        template<std::size_t S>
+        struct SameEndingImpl<std::index_sequence<S>, std::index_sequence<S>> {
+            static constexpr bool Value = true;
+        };
+
+        template<std::size_t S, std::size_t... A, std::size_t... B>
+        struct SameEndingImpl<std::index_sequence<S, A...>, std::index_sequence<S, B...>> {
+            static constexpr bool Value = SameEndingImpl<
+                std::index_sequence<A...>,
+                std::index_sequence<B...>,
+            >::Value;
+        };
+
+        template<typename IndexSequenceA, typename IndexSequenceB>
+        constexpr bool SameEnding = SameEndingImpl<IndexSequenceA, IndexSequenceB>::Value;
 
         template<typename F, typename G, typename T, std::size_t... Dimensions>
         Tensor<T, Dimensions...> elementwise_tensor(F&& f, G&& g, const Tensor<T, Dimensions...>& x) {
@@ -590,6 +615,11 @@ namespace scorch {
 
         template<typename F, typename G0, typename G1, typename T, std::size_t... Dimensions>
         Tensor<T, Dimensions...> elementwise_tensor_tensor(F&& f, G0&& g0, G1&& g1, const Tensor<T, Dimensions...>& x0, const Tensor<T, Dimensions...>& x1) {
+            // TODO:
+            // - take dimensions for x0 and x1 separately,
+            // - assert that they have the same ending
+            // - loop over any outer dimensions, like matvecmul
+
             // F : T, T => T
             static_assert(std::is_invocable_v<F, T, T>);
             static_assert(std::is_same_v<std::invoke_result_t<F, T, T>, T>);
@@ -687,12 +717,6 @@ namespace scorch {
 
             return Tensor{std::move(ptr_output), std::move(ptr_grad_fn)};
         }
-
-        // y0 = a * t0
-        // y1 = a * t1
-        // y2 = a * t2
-
-        // 
 
     } // namespace detail
 
@@ -808,6 +832,18 @@ namespace scorch {
         );
     }
 
+    // x ^ 1
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> operator^(const Tensor<T, Dimensions...>& l, T r) noexcept {
+        return detail::elementwise_tensor(
+            // f
+            [c_r = r](T t){ return std::pow(t, c_r); },
+            // df/dt
+            [c_r = r](T t) { return c_r * std::pow(t, c_r - T{1}); },
+            l
+        );
+    }
+
     // BINARY OPERATORS WITH SCALARS
 
     // 1 + x
@@ -913,6 +949,21 @@ namespace scorch {
             [](T s, T /* t */){ return T{1} / s; },
             // df/ds
             [](T s, T t){ return -t / (s * s); },
+            scalar,
+            tensor
+        );
+    }
+
+    // x ^ 1
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> operator^(const Tensor<T, Dimensions...>& tensor, const Tensor<T>& scalar) noexcept {
+        return detail::elementwise_scalar_tensor(
+            // f
+            [](T s, T t){ return std::pow(t, s); },
+            // df/dt
+            [](T s, T t){ return s * std::pow(t, s - T{1}); },
+            // df/ds
+            [](T s, T t){ return std::pow(t, s) * std::log(t); },
             scalar,
             tensor
         );
@@ -1138,11 +1189,11 @@ namespace scorch {
         ptr_output->item() *= k;
 
         auto grad_fn = [
-            c_x = x,
+            c_x = x
         ](const OutputTensorT& t) mutable {
             assert(t.m_grad);
             assert(c_x.m_grad);
-            const auto kk = T{1} / static_cast<T>(x.NElements);
+            const auto kk = T{1} / static_cast<T>(c_x.NElements);
 
             const auto& g = t.m_grad->item();
             for (auto i = std::size_t{0}; i < c_x.NElements; ++i) {
@@ -1158,11 +1209,104 @@ namespace scorch {
         return OutputTensorT{std::move(ptr_output), std::move(ptr_grad_fn)};
     }
 
-    template<typename T, std::size_t F_out, std::size_t F_in, std::size_t... OtherDimensions>
-    Tensor<T, OtherDimensions..., F_out> matvecmul(const Tensor<T, OtherDimensions..., F_in>& input, const Tensor<T, F_out, F_in>& matrix) noexcept {
-        using InputTensorT = Tensor<T, OtherDimensions..., F_in>;
-        using OutputTensorT = Tensor<T, OtherDimensions..., F_out>;
-        using OutputStorage = TensorStorage<T, OtherDimensions..., F_out>;
+    namespace detail {
+
+        // WANTS:
+        // - new last dimension plus list of all dimensions to substituted last dimension
+
+        template<std::size_t... Dimensions>
+        struct LastDimensionImpl;
+
+        template<std::size_t D0, std::size_t D1, std::size_t... Rest>
+        struct LastDimensionImpl<D0, D1, Rest...> {
+            static constexpr std::size_t Value = LastDimensionImpl<D1, Rest...>::Value;
+        };
+
+        template<std::size_t D>
+        struct LastDimensionImpl<D> {
+            static constexpr std::size_t Value = D;
+        };
+
+        template<std::size_t... Dimensions>
+        constexpr std::size_t LastDimension = LastDimensionImpl<Dimensions...>::Value;
+
+        template<std::size_t NewLastDimension, typename InputDimensionsSequence, typename OutputDimensionsSequence>
+        struct ReplaceLastDimensionImpl;
+
+        template<
+            std::size_t NewLastDimension,
+            std::size_t InputDimension0,
+            std::size_t InputDimension1,
+            std::size_t... OtherInputDimensions,
+            std::size_t... OutputDimensions
+        >
+        struct ReplaceLastDimensionImpl<
+            NewLastDimension,
+            std::index_sequence<
+                InputDimension0,
+                InputDimension1,
+                OtherInputDimensions...
+            >,
+            std::index_sequence<
+                OutputDimensions...
+            >
+        > {
+            using Type = typename ReplaceLastDimensionImpl<
+                NewLastDimension,
+                std::index_sequence<
+                    InputDimension1,
+                    OtherInputDimensions...
+                >,
+                std::index_sequence<
+                    InputDimension0,
+                    OutputDimensions...
+                >
+            >::Type;
+        };
+
+        template<
+            std::size_t NewLastDimension,
+            std::size_t InputDimension,
+            std::size_t... OutputDimensions
+        >
+        struct ReplaceLastDimensionImpl<
+            NewLastDimension,
+            std::index_sequence<InputDimension>,
+            std::index_sequence<OutputDimensions...>
+        > {
+            using Type = std::index_sequence<OutputDimensions..., InputDimension>;
+        };
+
+        template<std::size_t NewLastDimension, std::size_t... Dimensions>
+        using ReplaceLastDimension = typename ReplaceLastDimensionImpl<
+            NewLastDimension,
+            std::index_sequence<Dimensions...>,
+            std::index_sequence<>
+        >::Type;
+
+        template<typename T, typename NewDimensionsSequence>
+        struct ReplaceLastTensorDimensionImpl;
+
+        template<typename T, std::size_t... NewDimensions>
+        struct ReplaceLastTensorDimensionImpl<T, std::index_sequence<NewDimensions...>> {
+            using Type = Tensor<T, NewDimensions...>;
+        };
+
+        template<typename T, std::size_t NewLastDimension, std::size_t... Dimensions>
+        using ReplaceLastTensorDimension = typename ReplaceLastTensorDimensionImpl<
+            T,
+            ReplaceLastDimension<NewLastDimension, Dimensions...>
+        >::Type;
+
+    } // namespace detail
+
+    template<typename T, std::size_t F_out, std::size_t F_in, std::size_t... Dimensions>
+    auto matvecmul(const Tensor<T, Dimensions...>& input, const Tensor<T, F_out, F_in>& matrix) noexcept {
+        static_assert(detail::LastDimension<Dimensions...> == F_in);
+        using InputTensorT = Tensor<T, Dimensions...>;
+        using OutputTensorT = detail::ReplaceLastTensorDimension<T, F_out, Dimensions...>;
+        static_assert(detail::IsTensor<OutputTensorT>);
+        using OutputStorage = typename OutputTensorT::Storage;
         using GradFn = std::function<void(const OutputTensorT&)>;
 
         auto ptr_output = std::make_shared<OutputStorage>();
@@ -1187,10 +1331,10 @@ namespace scorch {
 
             for (auto b = std::size_t{0}, bEnd = (c_input.NElements / F_in); b < bEnd; ++b) {
                 for (auto i = std::size_t{0}; i < F_out; ++i) {
+                    const auto& g = t.grad().get_flat(b * F_out + i);
                     for (auto j = std::size_t{0}; j < F_in; ++j) {
                         const auto& x_j = c_input.get_flat(b * F_in + j);
                         const auto& m_i_j = c_matrix(i, j);
-                        const auto& g = t.grad().get_flat(b * F_out + i);
                         c_matrix.grad_mut()(i, j) += x_j * g;
                         c_input.grad_mut().get_flat(b * F_in + j) += m_i_j * g;
                     }
@@ -1206,8 +1350,8 @@ namespace scorch {
         return OutputTensorT{std::move(ptr_output), std::move(ptr_grad_fn)};
     }
 
-    template<typename T, std::size_t F_out, std::size_t F_in, std::size_t... OtherDimensions>
-    Tensor<T, OtherDimensions..., F_out> operator%(const Tensor<T, OtherDimensions..., F_in>& input, const Tensor<T, F_out, F_in>& matrix) noexcept {
+    template<typename T, std::size_t F_out, std::size_t F_in, std::size_t... Dimensions>
+    auto operator%(const Tensor<T, Dimensions...>& input, const Tensor<T, F_out, F_in>& matrix) noexcept {
         return matvecmul(input, matrix);
     }
 
