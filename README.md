@@ -69,6 +69,7 @@ Features that are not supported but are probably coming soon:
  - Matrix-matrix multiplication
  - Some remaining basic mathematical functions (e.g. `cbrt`, `atan`, etc...)
  - Smarter optimizers (e.g. Adam, RMSProp, if I can understand them)
+ - Higher-order derivatives (maybe)
 
 Features that not supported and probably never will be:
  - GPU acceleration
