@@ -3,9 +3,6 @@
 
 #include <scorch.hpp> 
 
-template<typename T>
-void td();
-
 int main() {
     // Train a simple neural network with 4 inputs, 4 outputs,
     // and two hidden layers with 16 neurons each to learn
@@ -30,7 +27,6 @@ int main() {
 
     // batch size
     constexpr std::size_t BatchDim = 16;
-
 
     constexpr auto num_iterations = 100;
     for (auto i = 0; i < num_iterations; ++i) {
