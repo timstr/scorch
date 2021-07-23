@@ -374,7 +374,7 @@ namespace scorch {
 
     template<typename T, std::size_t... Dimensions>
     std::ostream& operator<<(std::ostream& o, const TensorStorage<T, Dimensions...>& t) noexcept {
-        if constexpr (t.Scalar) {
+        if constexpr (std::decay_t<decltype(t)>::Scalar) {
             o << t.item();
             return o;
         }
@@ -487,65 +487,68 @@ namespace scorch {
 
     } // namespace detail
 
-    template<typename... Parameters>
-    class Optimizer {
-    public:
-        static_assert((detail::IsTensor<Parameters> && ...));
+    namespace optim {
 
-        Optimizer(const Parameters&... parameters)
-            : m_parameters(parameters...) {
+        template<typename... Parameters>
+        class Optimizer {
+        public:
+            static_assert((detail::IsTensor<Parameters> && ...));
 
-        }
+            Optimizer(const Parameters&... parameters)
+                : m_parameters(parameters...) {
 
-        virtual void zero_grad() = 0;
+            }
 
-        virtual void step() = 0;
+            virtual void zero_grad() = 0;
 
-        std::tuple<Parameters...>& parameters() noexcept {
-            return m_parameters;
-        }
+            virtual void step() = 0;
 
-        template<typename F>
-        void visit_parameters(F&& f) {
-            std::apply(
-                [c_f = std::forward<F>(f)](auto&... args){
-                    (c_f(args), ...);
-                },
-                m_parameters
-            );
-        }
+            std::tuple<Parameters...>& parameters() noexcept {
+                return m_parameters;
+            }
 
-    private:
-        std::tuple<Parameters...> m_parameters;
-    };
+            template<typename F>
+            void visit_parameters(F&& f) {
+                std::apply(
+                    [c_f = std::forward<F>(f)](auto&... args){
+                        (c_f(args), ...);
+                    },
+                    m_parameters
+                );
+            }
 
-    template<typename T, typename... Parameters>
-    class SGD : public Optimizer<Parameters...> {
-    public:
-        SGD(T step_size, T momentum, const Parameters&... parameters)
-            : m_step_size(step_size)
-            , m_momentum(momentum)
-            , Optimizer(parameters...) {
+        private:
+            std::tuple<Parameters...> m_parameters;
+        };
 
-        }
+        template<typename T, typename... Parameters>
+        class SGD : public Optimizer<Parameters...> {
+        public:
+            SGD(T step_size, T momentum, const Parameters&... parameters)
+                : m_step_size(step_size)
+                , m_momentum(momentum)
+                , Optimizer<Parameters...>(parameters...) {
 
-        void zero_grad() override {
-            this->visit_parameters([this](auto& param){
-                param.grad_mut() *= this->m_momentum;
-            });
-        }
+            }
 
-        void step() override {
-            this->visit_parameters([this](auto& param){
-                param.value_mut().fma(-this->m_step_size, param.grad());
-            });
-        }
+            void zero_grad() override {
+                this->visit_parameters([this](auto& param){
+                    param.grad_mut() *= this->m_momentum;
+                });
+            }
 
-    private:
-        T m_step_size;
-        T m_momentum;
-    };
+            void step() override {
+                this->visit_parameters([this](auto& param){
+                    param.value_mut().fma(-this->m_step_size, param.grad());
+                });
+            }
 
+        private:
+            T m_step_size;
+            T m_momentum;
+        };
+
+    } // namespace optim
 
 
     //------------------------------------------
@@ -633,8 +636,8 @@ namespace scorch {
                 >
             );
 
-            constexpr auto Size0 = x0.NElements;
-            constexpr auto Size1 = x1.NElements;
+            constexpr auto Size0 = std::decay_t<decltype(x0)>::NElements;
+            constexpr auto Size1 = std::decay_t<decltype(x1)>::NElements;
             constexpr auto InnerSize = (Size0 < Size1) ? Size0 : Size1;
             constexpr auto OuterSize = (Size0 > Size1) ? Size0 : Size1;
 

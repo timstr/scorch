@@ -22,8 +22,8 @@ int main() {
     auto b2 = scorch::rand<float, OutputDim>();
 
     // optimizer
-    // learning rate, momentum ration, parameters...
-    auto opt = scorch::SGD(0.1f, 0.8f, W0, b0, W1, b1);
+    // learning rate, momentum ratio, parameters...
+    auto opt = scorch::optim::SGD(0.1f, 0.8f, W0, b0, W1, b1);
 
     // batch size
     constexpr std::size_t BatchDim = 16;
@@ -38,7 +38,7 @@ int main() {
         auto y = copy(x);
 
         // compute the network output
-        // I love how operator overloading and  ADL work here
+        // I love how operator overloading and ADL work here
         auto y_hat = sigmoid(sigmoid(x % W0 + b0) % W1 + b1) % W2 + b2;
 
         // compute the loss
