@@ -280,7 +280,7 @@ namespace scorch {
             return (*m_storage)(indices...);
         }
 
-        T& operator()(detail::MapNonTypeToType<Dimensions, std::size_t>... indices) noexcept {
+        T& get_mut(detail::MapNonTypeToType<Dimensions, std::size_t>... indices) noexcept {
             assert(m_storage);
             assert(!requires_grad());
             return (*m_storage)(indices...);
@@ -341,7 +341,7 @@ namespace scorch {
     };
 
     template<typename T, std::size_t... Dimensions>
-    Tensor<T, Dimensions...> copy(Tensor<T, Dimensions...>& src) noexcept {
+    Tensor<T, Dimensions...> copy(const Tensor<T, Dimensions...>& src) noexcept {
         auto t = Tensor<T, Dimensions...>{};
         for (auto i = std::size_t{0}; i < t.NElements; ++i) {
             t.value_mut().get_flat(i) = src.get_flat(i);
@@ -353,6 +353,17 @@ namespace scorch {
     Tensor<T, Dimensions...> rand(T low_value = T{0}, T high_value = T{1}) noexcept {
         auto t = Tensor<T, Dimensions...>{};
         auto d = std::uniform_real_distribution<T>(low_value, high_value);
+        for (auto i = std::size_t{0}; i < t.NElements; ++i) {
+            t.value_mut().get_flat(i) = d(detail::randEng);
+        }
+        return t;
+    }
+
+    template<typename T, std::size_t F_out, std::size_t F_in>
+    Tensor<T, F_out, F_in> random_matrix() noexcept {
+        const auto sqrt_k = std::sqrt(T{1} / static_cast<T>(F_in));
+        auto t = Tensor<T, F_out, F_in>{};
+        auto d = std::uniform_real_distribution<T>(-sqrt_k, sqrt_k);
         for (auto i = std::size_t{0}; i < t.NElements; ++i) {
             t.value_mut().get_flat(i) = d(detail::randEng);
         }
@@ -717,12 +728,12 @@ namespace scorch {
                             const auto& x0_v = c_x0.get_flat(j);
                             const auto& x1_v = c_x1.get_flat(ii);
                             c_x0.m_grad->get_flat(j) += c_g0(x0_v, x1_v) * g;
-                            c_x1.m_grad->get_flat(ii) += c_g0(x0_v, x1_v) * g;
+                            c_x1.m_grad->get_flat(ii) += c_g1(x0_v, x1_v) * g;
                         } else {
                             const auto& x0_v = c_x0.get_flat(ii);
                             const auto& x1_v = c_x1.get_flat(j);
                             c_x0.m_grad->get_flat(ii) += c_g0(x0_v, x1_v) * g;
-                            c_x1.m_grad->get_flat(j) += c_g0(x0_v, x1_v) * g;
+                            c_x1.m_grad->get_flat(j) += c_g1(x0_v, x1_v) * g;
                         }
                     }
                 }
@@ -1021,7 +1032,7 @@ namespace scorch {
         );
     }
 
-    // cos(x)
+    // sigmoid(x)
     template<typename T, std::size_t... Dimensions>
     Tensor<T, Dimensions...> sigmoid(const Tensor<T, Dimensions...>& x) noexcept {
         return detail::elementwise_tensor(
@@ -1031,6 +1042,20 @@ namespace scorch {
             [](T t) {
                 const auto s = T{1} / (T{1} + std::exp(-t));
                 return s * (T{1} - s);
+            },
+            x
+        );
+    }
+
+    // relu(x)
+    template<typename T, std::size_t... Dimensions>
+    Tensor<T, Dimensions...> relu(const Tensor<T, Dimensions...>& x) noexcept {
+        return detail::elementwise_tensor(
+            // f
+            [](T t){ return std::max(t, T{0}); },
+            // df/dt
+            [](T t) {
+                return t >= T{0} ? T{1} : T{0};
             },
             x
         );
