@@ -1,6 +1,6 @@
 # Scorch
 
-A lightweight, cross-platform, header-only library written standard C++ for tensor arithmetic with automatic differentiation, designed to closely mimick the famous PyTorch library in usage and appearance but with improved compile-time safety checks.
+A lightweight, cross-platform, header-only library written in standard C++ for tensor arithmetic with automatic differentiation, designed to closely mimick the famous PyTorch library in usage and appearance but with improved compile-time safety checks.
 
 Here's an example that trains a two-layer neural network to learn the identity function. This code can be run in `demo.cpp`. Most of this should look and feel immediately familiar to a PyTorch user.
 ```C++
