@@ -8,7 +8,7 @@ set(scorch_includes
     include/scorch.hpp
 )
 
-add_library(scorch INTERFACE ${scorch_includes})
+add_library(scorch INTERFACE)
 target_include_directories(scorch
     INTERFACE include
 )
